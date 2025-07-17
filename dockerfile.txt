@@ -1,0 +1,89 @@
+# Multi-stage build for production deployment
+
+# Stage 1: Python environment for Software TINA
+FROM python:3.9-slim as python-builder
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libsndfile1 \
+    libportaudio2 \
+    ngspice \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy Python requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Python source code
+COPY *.py ./
+COPY config/ ./config/
+
+# Stage 2: Node.js environment for UI
+FROM node:18-alpine as node-builder
+
+WORKDIR /app/ui
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy UI source code
+COPY *.tsx ./src/
+COPY *.ts ./src/
+COPY public/ ./public/
+COPY tsconfig.json ./
+COPY vite.config.ts ./
+COPY tailwind.config.js ./
+
+# Build UI
+RUN npm run build
+
+# Stage 3: Production image
+FROM python:3.9-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libsndfile1 \
+    libportaudio2 \
+    ngspice \
+    nginx \
+    supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 ampuser
+
+# Copy Python environment from builder
+COPY --from=python-builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=python-builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+WORKDIR /app
+COPY --from=python-builder /app /app
+COPY --from=node-builder /app/ui/dist /app/static
+
+# Copy configuration files
+COPY docker/nginx.conf /etc/nginx/sites-available/default
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/data /app/models && \
+    chown -R ampuser:ampuser /app
+
+# Switch to non-root user
+USER ampuser
+
+# Expose ports
+EXPOSE 8000 8080
+
+# Start supervisor
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

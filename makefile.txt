@@ -1,0 +1,155 @@
+# Neural Amp Modeler Makefile
+
+.PHONY: help install test lint format clean docker-build docker-run docs
+
+# Default target
+help:
+	@echo "Neural Amp Modeler - Available targets:"
+	@echo "  install      - Install all dependencies"
+	@echo "  test         - Run all tests"
+	@echo "  lint         - Run linters"
+	@echo "  format       - Format code"
+	@echo "  clean        - Clean temporary files"
+	@echo "  docker-build - Build Docker image"
+	@echo "  docker-run   - Run with Docker Compose"
+	@echo "  docs         - Generate documentation"
+	@echo "  train        - Run example training pipeline"
+
+# Python virtual environment
+VENV = venv
+PYTHON = $(VENV)/bin/python
+PIP = $(VENV)/bin/pip
+
+# Install dependencies
+install: install-python install-node
+
+install-python:
+	python3 -m venv $(VENV)
+	$(PIP) install --upgrade pip
+	$(PIP) install -r requirements.txt
+	$(PIP) install -r requirements-dev.txt
+
+install-node:
+	cd ui && npm install
+
+# Run tests
+test: test-python test-node
+
+test-python:
+	$(PYTHON) -m pytest tests/ -v --cov=. --cov-report=html
+
+test-node:
+	cd ui && npm test
+
+# Lint code
+lint: lint-python lint-node
+
+lint-python:
+	$(PYTHON) -m flake8 . --config=.flake8
+	$(PYTHON) -m mypy . --config-file=mypy.ini
+
+lint-node:
+	cd ui && npm run lint
+
+# Format code
+format: format-python format-node
+
+format-python:
+	$(PYTHON) -m black .
+	$(PYTHON) -m isort .
+
+format-node:
+	cd ui && npm run lint:fix
+
+# Clean temporary files
+clean:
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	find . -type d -name "*.egg-info" -delete
+	rm -rf .pytest_cache
+	rm -rf .coverage
+	rm -rf htmlcov
+	rm -rf dist
+	rm -rf build
+	rm -rf ui/dist
+	rm -rf ui/node_modules/.cache
+
+# Docker operations
+docker-build:
+	docker build -t neural-amp-modeler:latest .
+
+docker-run:
+	docker-compose up -d
+
+docker-stop:
+	docker-compose down
+
+docker-logs:
+	docker-compose logs -f
+
+# Generate documentation
+docs:
+	$(PYTHON) -m sphinx -b html docs/ docs/_build/html
+
+# Run training pipeline example
+train:
+	$(PYTHON) examples/train_tube_preamp.py
+
+# Development server
+dev: dev-api dev-ui
+
+dev-api:
+	$(PYTHON) -m uvicorn api.main:app --reload --port 8000
+
+dev-ui:
+	cd ui && npm run dev
+
+# Production build
+build: build-python build-ui
+
+build-python:
+	$(PYTHON) setup.py sdist bdist_wheel
+
+build-ui:
+	cd ui && npm run build
+
+# Database operations
+db-init:
+	$(PYTHON) scripts/init_db.py
+
+db-migrate:
+	$(PYTHON) scripts/migrate_db.py
+
+# Monitoring
+monitor-start:
+	docker-compose up -d prometheus grafana
+
+monitor-stop:
+	docker-compose stop prometheus grafana
+
+# Utility targets
+check-deps:
+	$(PIP) list --outdated
+
+update-deps:
+	$(PIP) install --upgrade pip
+	$(PIP) install --upgrade -r requirements.txt
+
+# Performance profiling
+profile:
+	$(PYTHON) -m cProfile -o profile.stats examples/profile_simulation.py
+	$(PYTHON) -m pstats profile.stats
+
+# Security scan
+security:
+	$(PYTHON) -m bandit -r . -f json -o security-report.json
+
+# Create release
+release:
+	@echo "Creating release..."
+	git tag -a v$(VERSION) -m "Release v$(VERSION)"
+	git push origin v$(VERSION)
+
+# Install pre-commit hooks
+install-hooks:
+	pre-commit install

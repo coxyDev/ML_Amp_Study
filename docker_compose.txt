@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # Main application service
+  amp-modeler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: neural-amp-modeler:latest
+    container_name: neural-amp-modeler
+    ports:
+      - "8000:8000"  # API port
+      - "8080:8080"  # UI port
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TF_CPP_MIN_LOG_LEVEL=2
+      - WORKERS=${WORKERS:-8}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SPICE_COMMAND=${SPICE_COMMAND:-ngspice}
+    restart: unless-stopped
+    networks:
+      - amp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: neural-amp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - amp-network
+    restart: unless-stopped
+
+  # PostgreSQL for metadata (optional)
+  postgres:
+    image: postgres:15-alpine
+    container_name: neural-amp-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=ampuser
+      - POSTGRES_PASSWORD=amppass
+      - POSTGRES_DB=neural_amp_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - amp-network
+    restart: unless-stopped
+
+  # Monitoring with Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: neural-amp-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - amp-network
+    restart: unless-stopped
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: neural-amp-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - amp-network
+    restart: unless-stopped
+
+networks:
+  amp-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
